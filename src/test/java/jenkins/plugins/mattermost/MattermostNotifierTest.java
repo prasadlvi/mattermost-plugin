@@ -3,6 +3,7 @@ package jenkins.plugins.mattermost;
 import hudson.model.Descriptor;
 import hudson.util.FormValidation;
 import junit.framework.TestCase;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -21,7 +22,8 @@ public class MattermostNotifierTest extends TestCase {
 
 	@Before
 	@Override
-	public void setUp() {
+	public void setUp() throws Exception {
+		super.setUp();
 		descriptor = new MattermostNotifierStub.DescriptorImplStub();
 	}
 
@@ -59,15 +61,22 @@ public class MattermostNotifierTest extends TestCase {
 
 		private boolean response;
 
+		@Override
 		public boolean publish(String message) {
 			return response;
 		}
 
+		@Override
 		public boolean publish(String message, String color) {
 			return response;
 		}
 
-		public void setResponse(boolean response) {
+		@Override
+		public boolean publish(JSONObject json, String color) {
+			return response;
+		}
+
+		void setResponse(boolean response) {
 			this.response = response;
 		}
 	}
