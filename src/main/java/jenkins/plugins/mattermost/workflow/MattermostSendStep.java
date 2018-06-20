@@ -3,7 +3,9 @@ package jenkins.plugins.mattermost.workflow;
 import hudson.AbortException;
 import hudson.Extension;
 import hudson.Util;
-import hudson.model.*;
+import hudson.model.Result;
+import hudson.model.Run;
+import hudson.model.TaskListener;
 import hudson.plugins.git.GitChangeSet;
 import hudson.plugins.git.GitChangeSetList;
 import hudson.scm.ChangeLogSet;
@@ -27,11 +29,8 @@ import org.kohsuke.stapler.DataBoundSetter;
 
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
-
 import java.io.PrintStream;
 import java.util.*;
-
-import static org.json.JSONObject.quote;
 
 /**
  * Workflow step to send a Slack channel notification.
@@ -319,15 +318,6 @@ public class MattermostSendStep extends AbstractStepImpl {
             long buildEndTime = buildStartTime + buildDuration;
             long backToNormalDuration = buildEndTime - previousSuccessEndTime;
             return Util.getTimeSpanString(backToNormalDuration);
-        }
-
-        String escape(String string) {
-            string = string.replace("&", "&amp;");
-            string = string.replace("<", "&lt;");
-            string = string.replace(">", "&gt;");
-            string = string.replace("#", "\\#");
-
-            return quote(string);
         }
 
         private long getDuration() {
