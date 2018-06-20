@@ -142,7 +142,6 @@ public class MattermostSendStep extends AbstractStepImpl {
                 return null;
             }
 
-            WorkflowRun build = getContext().get(WorkflowRun.class);
             MattermostNotifier.DescriptorImpl slackDesc = jenkins.getDescriptorByType(MattermostNotifier.DescriptorImpl.class);
             String team = step.endpoint != null ? step.endpoint : slackDesc.getEndpoint();
             String channel = step.channel != null ? step.channel : slackDesc.getRoom();
@@ -153,7 +152,13 @@ public class MattermostSendStep extends AbstractStepImpl {
             listener.getLogger().printf("Mattermost Send Pipeline step configured values from global config - connector: %s, icon: %s, channel: %s, color: %s", step.endpoint == null, step.icon == null, step.channel == null, step.color == null);
 
             MattermostService slackService = getMattermostService(team, channel, icon);
-            boolean publishSuccess = slackService.publish(getBuildStatusJSON(build, listener.getLogger()), color);
+            boolean publishSuccess;
+            if(StringUtils.isBlank(step.message)) {
+                WorkflowRun build = getContext().get(WorkflowRun.class);
+                publishSuccess = slackService.publish(getBuildStatusJSON(build, listener.getLogger()), color);
+            } else {
+                publishSuccess = slackService.publish(step.message, color);
+            }
             if (!publishSuccess && step.failOnError) {
                 throw new AbortException("Mattermost notification failed. See Jenkins logs for details.");
             } else if (!publishSuccess) {
