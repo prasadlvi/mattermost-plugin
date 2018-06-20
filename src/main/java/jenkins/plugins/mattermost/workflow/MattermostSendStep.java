@@ -143,8 +143,6 @@ public class MattermostSendStep extends AbstractStepImpl {
             }
 
             WorkflowRun build = getContext().get(WorkflowRun.class);
-            listener.getLogger().println("Build class name 1 : " + build.getClass().getName());
-
             MattermostNotifier.DescriptorImpl slackDesc = jenkins.getDescriptorByType(MattermostNotifier.DescriptorImpl.class);
             String team = step.endpoint != null ? step.endpoint : slackDesc.getEndpoint();
             String channel = step.channel != null ? step.channel : slackDesc.getRoom();
