@@ -3,15 +3,18 @@ package jenkins.plugins.mattermost.workflow;
 import hudson.AbortException;
 import hudson.Extension;
 import hudson.Util;
-import hudson.model.Result;
-import hudson.model.Run;
-import hudson.model.TaskListener;
+import hudson.model.*;
+import hudson.plugins.git.GitChangeSet;
+import hudson.plugins.git.GitChangeSetList;
+import hudson.scm.ChangeLogSet;
+import hudson.scm.EditType;
 import hudson.tasks.test.AbstractTestResultAction;
 import jenkins.model.Jenkins;
 import jenkins.model.JenkinsLocationConfiguration;
 import jenkins.plugins.mattermost.MattermostNotifier;
 import jenkins.plugins.mattermost.MattermostService;
 import jenkins.plugins.mattermost.StandardMattermostService;
+import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.workflow.job.WorkflowRun;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepDescriptorImpl;
 import org.jenkinsci.plugins.workflow.steps.AbstractStepImpl;
@@ -24,6 +27,9 @@ import org.kohsuke.stapler.DataBoundSetter;
 
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
+
+import java.io.PrintStream;
+import java.util.*;
 
 import static org.json.JSONObject.quote;
 
@@ -140,9 +146,6 @@ public class MattermostSendStep extends AbstractStepImpl {
             WorkflowRun build = getContext().get(WorkflowRun.class);
             listener.getLogger().println("Build class name 1 : " + build.getClass().getName());
 
-
-//            WorkflowMultiBranchProject project = jenkins.getItemByFullName("pipeline-multibranch", WorkflowMultiBranchProject.class);
-
             MattermostNotifier.DescriptorImpl slackDesc = jenkins.getDescriptorByType(MattermostNotifier.DescriptorImpl.class);
             String team = step.endpoint != null ? step.endpoint : slackDesc.getEndpoint();
             String channel = step.channel != null ? step.channel : slackDesc.getRoom();
@@ -153,7 +156,7 @@ public class MattermostSendStep extends AbstractStepImpl {
             listener.getLogger().printf("Mattermost Send Pipeline step configured values from global config - connector: %s, icon: %s, channel: %s, color: %s", step.endpoint == null, step.icon == null, step.channel == null, step.color == null);
 
             MattermostService slackService = getMattermostService(team, channel, icon);
-            boolean publishSuccess = slackService.publish(getBuildStatusJSON(build), color);
+            boolean publishSuccess = slackService.publish(getBuildStatusJSON(build, listener.getLogger()), color);
             if (!publishSuccess && step.failOnError) {
                 throw new AbortException("Mattermost notification failed. See Jenkins logs for details.");
             } else if (!publishSuccess) {
@@ -169,7 +172,7 @@ public class MattermostSendStep extends AbstractStepImpl {
 
     }
 
-    private static JSONObject getBuildStatusJSON(WorkflowRun build) {
+    private static JSONObject getBuildStatusJSON(WorkflowRun build, PrintStream logger) {
         MessageBuilder message = new MessageBuilder(build)
                 .appendProjectAsAuthor()
                 .appendCommitsAsText()
@@ -182,8 +185,7 @@ public class MattermostSendStep extends AbstractStepImpl {
 
     public static class MessageBuilder {
 
-        private static final String STARTING_STATUS_MESSAGE = ":pray: Starting...",
-                BACK_TO_NORMAL_STATUS_MESSAGE = ":white_check_mark: Back to normal",
+        private static final String BACK_TO_NORMAL_STATUS_MESSAGE = ":white_check_mark: Back to normal",
                 STILL_FAILING_STATUS_MESSAGE = ":no_entry_sign: Still Failing",
                 SUCCESS_STATUS_MESSAGE = ":white_check_mark: Success",
                 FAILURE_STATUS_MESSAGE = ":no_entry_sign: Failure",
@@ -198,7 +200,7 @@ public class MattermostSendStep extends AbstractStepImpl {
         private final JSONObject json;
         private final String buildServerUrl;
 
-        public MessageBuilder( WorkflowRun build) {
+        public MessageBuilder(WorkflowRun build) {
             this.build = build;
 
             json = new JSONObject();
@@ -215,16 +217,6 @@ public class MattermostSendStep extends AbstractStepImpl {
             JenkinsLocationConfiguration jenkinsConfig = new JenkinsLocationConfiguration();
             buildServerUrl = jenkinsConfig.getUrl();
 
-//         try {
-//            FilePath logo = build.getWorkspace().child("logo.png");
-//            if (logo.exists()) {
-//               String url = (notifier.getBuildServerUrl() + "job/" + build.getProject().getName() + "/ws/" + logo.getName());
-//               logger.info("thumb_url=" + url);
-//               attachment.put("thumb_url", url);
-//            }
-//         } catch (IOException | InterruptedException e) {
-//            // nothing
-//         }
         }
 
         public JSONObject getMattermostJSON() {
@@ -268,28 +260,26 @@ public class MattermostSendStep extends AbstractStepImpl {
         }
 
         public MessageBuilder appendCommitsAsText() {
-
-//            attachment.put("text", getCommitList(build));
-
+            attachment.put("text", getCommitList(build));
             return this;
         }
 
         public MessageBuilder appendChanges() {
-////            String changes = getChanges(build, notifier != null && notifier.includeCustomMessage());
-//            if (changes == null) {
-//                return this;
-//            }
-//
-//            JSONObject field = new JSONObject();
-//            field.put("short", false);
-//            field.put("title", "Changes");
-//            field.put("value", changes);
-//
-//            fields.put(field);
+            String changes = getChanges();
+            if (changes == null) {
+                return this;
+            }
+
+            JSONObject field = new JSONObject();
+            field.put("short", false);
+            field.put("title", "Changes");
+            field.put("value", changes);
+
+            fields.put(field);
             return this;
         }
 
-        public MessageBuilder appendTestSummary() {
+        private MessageBuilder appendTestSummary() {
 
             JSONObject field = new JSONObject();
             field.put("short", false);
@@ -406,105 +396,88 @@ public class MattermostSendStep extends AbstractStepImpl {
         public String toString() {
             return attachment.toString();
         }
+
+        private String getCommitList(WorkflowRun build) {
+            List<ChangeLogSet<? extends ChangeLogSet.Entry>> changeSets = build.getChangeSets();
+            List<GitChangeSetList> entries = new LinkedList<>();
+            for (Object o : changeSets) {
+                GitChangeSetList entry = (GitChangeSetList) o;
+                entries.add(entry);
+            }
+
+            Set<String> commits = new HashSet<>();
+            for (GitChangeSetList entry : entries) {
+                for (GitChangeSet gitChangeSet : entry) {
+                    StringBuilder commit = new StringBuilder();
+                    commit.append(gitChangeSet.getMsg());
+                    commit.append(" [").append(gitChangeSet.getAuthor().getDisplayName()).append("]");
+                    commits.add(commit.toString());
+                }
+            }
+
+            if(entries.isEmpty()) {
+                return "No Changes.";
+            }
+
+            return "- " + StringUtils.join(commits, "\n- ");
+        }
+
+        private String getChanges() {
+
+            List<ChangeLogSet<? extends ChangeLogSet.Entry>> changeSets = build.getChangeSets();
+
+            if (changeSets == null) {
+                return null;
+            }
+
+            List<GitChangeSetList> gitChangeSetLists = new LinkedList<>();
+            for (Object o : changeSets) {
+                GitChangeSetList entry = (GitChangeSetList) o;
+                gitChangeSetLists.add(entry);
+            }
+
+            List<GitChangeSet> entries = new ArrayList<>();
+            Set<ChangeLogSet.AffectedFile> files = new HashSet<>();
+            for (GitChangeSetList changeSetList : gitChangeSetLists) {
+                for (GitChangeSet gitChangeSet : changeSetList) {
+                    entries.add(gitChangeSet);
+                    files.addAll(gitChangeSet.getAffectedFiles());
+                }
+            }
+
+            if (entries.isEmpty()) {
+                return null;
+            }
+
+            Set<String> authors = new HashSet<>();
+            for (ChangeLogSet.Entry entry : entries) {
+                authors.add(entry.getAuthor().getDisplayName());
+            }
+
+            StringBuilder message = new StringBuilder();
+            message.append(":checkered_flag: Started by changes from ");
+            message.append(StringUtils.join(authors, ", "));
+            message.append(" (");
+            message.append(files.size());
+            message.append((files.size() == 1) ? " file" : " files").append(" changed):  \n");
+
+            int fileCount = 0;
+            outer: for (ChangeLogSet.Entry entry : entries) {
+                for (ChangeLogSet.AffectedFile file : entry.getAffectedFiles()) {
+                    if (fileCount > 7) {
+                        message.append("*...file list truncated for display.*");
+                        break outer;
+                    }
+                    message.append((file.getEditType() == EditType.DELETE) ? "~~" : "")
+                            .append("``").append(file.getPath()).append("``")
+                            .append((file.getEditType() == EditType.DELETE) ? "~~" : "")
+                            .append("  \n");
+                    fileCount++;
+                }
+            }
+
+            return message.toString();
+        }
     }
 
-//    private String getCommitList(WorkflowRun build) {
-//        ChangeLogSet changeSet = build.getChangeSet();
-//        List<ChangeLogSet.Entry> entries = new LinkedList<>();
-//        for (Object o : changeSet.getItems()) {
-//            ChangeLogSet.Entry entry = (ChangeLogSet.Entry) o;
-////            logger.info("Entry " + o);
-//            entries.add(entry);
-//        }
-//
-//        if (entries.isEmpty()) {
-////            logger.info("Empty change...");
-//            Cause.UpstreamCause c = (Cause.UpstreamCause) build.getCause(Cause.UpstreamCause.class);
-//            if (c == null) {
-//                return "No Changes.";
-//            }
-//
-//            String upProjectName = c.getUpstreamProject();
-//            int buildNumber = c.getUpstreamBuild();
-//            AbstractProject project = Jenkins.getInstance().getItemByFullName(upProjectName, AbstractProject.class);
-//            if (project == null) {
-//                return "No upstream project.";
-//            }
-//
-//            WorkflowRun upBuild = project.getBuildByNumber(buildNumber);
-//            return getCommitList(upBuild);
-//        }
-//
-//        Set<String> commits = new HashSet<>();
-//        for (ChangeLogSet.Entry entry : entries) {
-//            StringBuilder commit = new StringBuilder();
-////            CommitInfoChoice commitInfoChoice = CommitInfoChoice.s
-////            if (commitInfoChoice.showTitle()) {
-//                // String link = entry.getMsgAnnotated().replaceFirst(".+<a href='(.+?)'>.+", "($1)");
-//                // commit.append('[').append(entry.getMsg()).append(']').append(link);
-//                commit.append(entry.getMsg());
-////            }
-////            if (commitInfoChoice.showAuthor()) {
-//                commit.append(" [").append(entry.getAuthor().getDisplayName()).append("]");
-////            }
-//            commits.add(commit.toString());
-//        }
-//
-//        return "- " + StringUtils.join(commits, "\n- ");
-//    }
-//
-//    private String getChanges(WorkflowRun build, boolean includeCustomMessage) {
-////        if (!build.) {
-//////            logger.info("No change set computed...");
-////            return null;
-////        }
-//
-//        ChangeLogSet changeSet = build.getChangeSets();
-//        List<ChangeLogSet<? extends ChangeLogSet.Entry>> entries = build.getChangeSets();
-//        Set<ChangeLogSet.AffectedFile> files = new HashSet<>();
-//        for (Object o : changeSet.getItems()) {
-//            ChangeLogSet.Entry entry = (ChangeLogSet.Entry) o;
-////            logger.info("Entry " + o);
-//            entries.add(entry);
-//            files.addAll(entry.getAffectedFiles());
-//        }
-//
-//        if (entries.isEmpty()) {
-////            logger.info("Empty change...");
-//            return null;
-//        }
-//
-//        Set<String> authors = new HashSet<>();
-//        for (ChangeLogSet<? extends ChangeLogSet.Entry> entry : entries) {
-//            authors.add(entry.getAuthor().getDisplayName());
-//        }
-//
-//        StringBuilder message = new StringBuilder();
-//        message.append(":checkered_flag: Started by changes from ");
-//        message.append(StringUtils.join(authors, ", "));
-//        message.append(" (");
-//        message.append(files.size());
-//        message.append((files.size() == 1) ? " file" : " files").append(" changed):  \n");
-//
-//        int fileCount = 0;
-//        outer: for (ChangeLogSet.Entry entry : entries) {
-//            for (ChangeLogSet.AffectedFile file : entry.getAffectedFiles()) {
-//                if (fileCount > 7) {
-//                    message.append("*...file list truncated for display.*");
-//                    break outer;
-//                }
-//                message.append((file.getEditType() == EditType.DELETE) ? "~~" : "")
-//                        .append("``").append(file.getPath()).append("``")
-//                        .append((file.getEditType() == EditType.DELETE) ? "~~" : "")
-//                        .append("  \n");
-//                fileCount++;
-//            }
-//        }
-//
-////        if (includeCustomMessage) {
-////            message.append(getCustomMessage(build));
-////        }
-//
-//        return message.toString();
-//    }
 }
