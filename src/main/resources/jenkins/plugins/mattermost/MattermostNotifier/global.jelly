@@ -13,7 +13,7 @@
     tags they use. Views are always organized according to its owner class,
     so it should be straightforward to find them.
   -->
-<f:section title="Global Mattermost Notifier Settings" name="mattermost">
+<f:section title="Global Mattermost Notifier Settings" name="mattermostlvi">
     <f:entry title="Endpoint" help="${rootURL}/plugin/mattermost/help-globalConfig-mattermostEndpoint.html">
         <f:textbox field="endpoint" name="mattermostEndpoint" value="${descriptor.getEndpoint()}" />
     </f:entry>
